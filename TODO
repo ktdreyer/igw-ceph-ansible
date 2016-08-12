@@ -14,6 +14,7 @@ convert rbd calls in igw_lun to python rbd api (can't do mapping though!)
 add a rebalance module to balance the active paths across multiple gateways
 add a check to gateway to abort if the given nic/ip is already in use by an existing target that isn't the one we want to use
 account for the deletion of the gateway.conf object - how to repopulate from the running config..?
+add a igw-purge module and yml file to remove the config across gateway(s)
 
 
 Completed Tasks

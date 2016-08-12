@@ -1,0 +1,12 @@
+---
+  - name: OS Compatibility Check (RHEL 7.3)
+    assert:
+      that:
+        - "ansible_distribution == 'RedHat'"
+        - "ansible_distribution_version == '7.3'"
+
+  - name: ensure targetcli (LIO interface) is installed
+    yum: name=targetcli state=latest
+
+  - name: ensure python-netifaces is available (used by custom module)
+    yum: name=python-netifaces state=latest

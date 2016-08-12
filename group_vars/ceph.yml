@@ -1,0 +1,16 @@
+
+# Variables for the ceph gateways
+# requires a ceph group entry either in /etc/ansible/hosts or
+# passed as an inventory to ansible-playbook (-i)
+
+gateway_iqn: "ceph-igw"
+gateway_frontend_nic: "eth0"
+
+rbd_devices:
+  - { pool: 'rbd', image: 'ansible1', size: '10G', host: 'rhceph-1'}
+  - { pool: 'rbd', image: 'ansible2', size: '15G', host: 'rhceph-1'}
+  - { pool: 'rbd', image: 'ansible3', size: '20G', host: 'rhceph-1'}
+  - { pool: 'rbd', image: 'ansible4', size: '50G', host: 'rhceph-1'}
+
+client_connections:
+  - { client: 'iqn.1994-05.com.redhat:rh7-iscsi-client', image_list: ['ansible1','ansible2'], credentials: 'rh7-iscsi-client/redhat' }

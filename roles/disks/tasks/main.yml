@@ -1,0 +1,22 @@
+---
+
+# 'lun' module supported parameters;
+#   pool ...... rbd pool for the image, or gluster volume name (NOT YET IMPLEMENTED)
+#   image ..... image name for the device
+#   size ...... device size (including M,G,T suffix)
+#   host ...... owning host to perform the create if the device doesn't exist
+#   features .. RESERVED - unused
+#   state ..... RESERVED - unused
+#
+# NB. the image name is used as the LUN name in LIO, so it must be unique across rbd pools
+
+  - name: Configure LUNs (create/map rbds and add to LIO)
+    igw_lun: pool={{ item.pool }} image={{item.image}} size={{ item.size }} host={{ item.host }}
+    with_items:
+      - { pool: 'rbd', image: 'ansible1', size: '10G', host: 'rhceph-1'}
+      - { pool: 'rbd', image: 'ansible2', size: '15G', host: 'rhceph-1'}
+      - { pool: 'rbd', image: 'ansible3', size: '20G', host: 'rhceph-1'}
+
+#     register: result
+#     debug: var=result
+

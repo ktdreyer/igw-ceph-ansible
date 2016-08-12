@@ -1,0 +1,29 @@
+---
+- name: Configure target hosts as LIO gateways for Ceph/Glusterfs
+  hosts: ceph
+
+  tasks:
+    - name: OS Compatibility Check (RHEL 7.3)
+      assert:
+        that:
+          - "ansible_distribution == 'RedHat'"
+          - "ansible_distribution_version == '7.3'"
+
+    - name: ensure targetcli (LIO interface) is installed
+      yum: name=targetcli state=latest
+
+    - name: ensure python-netifaces is available (used by custom module)
+      yum: name=python-netifaces state=latest
+
+    - name: Configure LUNs (create/map rbds and add to LIO)
+      igw_lun: pool={{ item.pool }} image={{item.image}} size={{ item.size }} host={{ item.host }}
+      with_items: "{{ rbd_devices }}"
+
+    - name: Configure iSCSI Gateway
+      gateway: gateway_name={{ gateway_iqn }} portal_interface={{ gateway_frontend_nic }}
+
+    - name: Configure a client connectivity group
+      client: client_iqn={{ item.client }} image_list={{item.image_list}} auth='chap' credentials={{ item.credentials }}
+      with_items: "{{ client_connections }}"
+
+

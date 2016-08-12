@@ -1,0 +1,34 @@
+
+
+Basic to-do list
+----------------
+check firewalld is enabled
+update firewalld for lio (3260)
+update firewalld for ceph
+
+
+Module updates to-do
+--------------------
+update the command calls to use pvs_cmd = module.get_bin_path('pvs', True) format, to make it more portable
+convert rbd calls in igw_lun to python rbd api (can't do mapping though!)
+add a rebalance module to balance the active paths across multiple gateways
+add a check to gateway to abort if the given nic/ip is already in use by an existing target that isn't the one we want to use
+account for the deletion of the gateway.conf object - how to repopulate from the running config..?
+
+
+Completed Tasks
+---------------
+update code path to detect rbd or gluster as the platform and modify code path accordingly ... done
+use ansible variables to abort tasks if not rhel 7.3 ... done
+add a timeout and abort to igw_lun.py ... done
+count the number of changes for the log summary ... done
+handle the logfile - rotate at size ... done
+add a disk size check to permit disk size increases by simply rerunning ansible ... done
+switch to rados calls for config object (replacing rados cli calls) ... done
+place Config class/methods in a separate module, so all custom modules interact with config in a standard manner ... done
+provide an example playbook based on group_variables ... done
+refactor lock/unlock code in Config class ... done
+
+
+BUGS
+----

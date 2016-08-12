@@ -1,0 +1,21 @@
+---
+
+# 'host' module adds a client to the iSCSI gateway(s)
+#
+# simple 'client' module invocation - without security
+#   client: client_iqn={{ item.client }} image_list={{item.image_list}}
+# with basic chap
+#   client: client_iqn={{ item.client }} image_list={{item.image_list}} auth={{ item.auth }} credentials={{ item.credentials }}
+#
+# NB. All members of the group must adhere to the same security policy due to the variable substitution
+#
+# credentials is a simple string - user/password
+
+  - name: Configure a client connectivity group
+
+    client: client_iqn={{ item.client }} image_list={{item.image_list}} auth='chap' credentials={{ item.credentials }}
+
+    with_items:
+      - { client: 'iqn.1994-05.com.redhat:rh7-iscsi-client', image_list: ['ansible1','ansible2'], credentials: 'rh7-iscsi-client/redhat' }
+
+

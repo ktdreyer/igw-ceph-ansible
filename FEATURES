@@ -1,0 +1,17 @@
+- confirms RHEL7.3 - and aborts if necessary
+- ensures targetcli is installed (for rtslib support)
+- creates rbd's if needed
+- checks the size of the rbds at run time and expands if necessary
+- maps the rbds to the host (gateway)
+- maps all rbds to LIO
+- creates an iscsi target - common iqn, and tpg
+- adds a portal ip based on a given interface name to the tpg
+- adds all the mapped luns to the tpg (ready for client assignment)
+- add clients to the gateways, with/without CHAP
+- images mapped to clients can be added/removed by rerunning ansible
+- clients can be removed using the state=absent variable
+
+
+Current State (from last ansible build) may be seen by looking at the
+rbd/gateway.conf object ... json formatted 'file'
+

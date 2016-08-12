@@ -1,0 +1,13 @@
+---
+- name: Configure target hosts as LIO gateways for Ceph/Glusterfs
+  hosts: ceph
+
+  roles:
+    # Run configuration roles against the hosts
+    - os-prep
+    - disks
+    - gateway
+    - clients
+
+
+

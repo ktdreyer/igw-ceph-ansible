@@ -29,6 +29,8 @@ switch to rados calls for config object (replacing rados cli calls) ... done
 place Config class/methods in a separate module, so all custom modules interact with config in a standard manner ... done
 provide an example playbook based on group_variables ... done
 refactor lock/unlock code in Config class ... done
+updated to assign IP address based on CIDR not interface name ... done
+
 
 
 BUGS

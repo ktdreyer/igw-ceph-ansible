@@ -3,8 +3,8 @@
 # requires a ceph group entry either in /etc/ansible/hosts or
 # passed as an inventory to ansible-playbook (-i)
 
-gateway_iqn: "ceph-igw"
-gateway_frontend_nic: "eth0"
+gateway_iqn: "iqn.2003-01.com.redhat.iscsi-gw:ceph-igw"
+iscsi_network: "10.90.90.0/24"
 
 rbd_devices:
   - { pool: 'rbd', image: 'ansible1', size: '10G', host: 'rhceph-1'}

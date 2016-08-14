@@ -6,6 +6,10 @@ import os
 import netifaces
 import logging
 import socket
+import netaddr
+import netifaces
+import struct
+
 from logging.handlers import RotatingFileHandler
 from ansible.module_utils.basic import *
 
@@ -16,19 +20,47 @@ from rtslib_fb.utils import RTSLibError
 
 from ceph_iscsi_gw.common import Config
 
+
+def valid_cidr(subnet):
+
+    try:
+        ip, s_mask = subnet.split('/')
+        netmask = int(s_mask)
+        if not 1 <= netmask <= 32:
+            raise ValueError
+        ip_as_long = struct.unpack('!L', socket.inet_aton(ip))[0]
+    except ValueError:
+        # netmask is invalid
+        return False
+    except socket.error:
+        # illegal ip address component
+        return False
+
+    # at this point the ip and netmask are ok to use, so return True
+    return True
+
+
 class Gateway(object):
 
-    def __init__(self, name, portal_interface):
-        self.iqn = "iqn.2003-01.com.redhat.iscsi-gw:{}".format(name)
-        self.portal_interface = portal_interface
-        self.ip_address = get_ip(portal_interface)
+    def __init__(self, iqn, iscsi_network):
         self.error = False
         self.error_msg = ''
+
+        self.iqn = iqn
+
+        self.ip_address = get_ip_address(iscsi_network)
+        if not self.ip_address:
+            self.error = True
+            self.error_msg = ("Unable to find an IP on this host, that matches"
+                              " the iscsi_network setting {}".format(iscsi_network))
+
         self.type = Config.get_platform()
         self.changes_made = False
         self.portal = None
         self.target = None
         self.tpg = None
+
+
 
     def exists(self):
         return os.path.exists('/sys/kernel/config/target/iscsi/{}'.format(self.iqn))
@@ -97,31 +129,44 @@ class Gateway(object):
     def delete(self):
         self.target.delete()
 
+def ipv4_addresses():
+    for iface in netifaces.interfaces():
+        for link in netifaces.ifaddresses(iface)[netifaces.AF_INET]:
+            yield link['addr']
 
-def get_ip(interface):
-    try:
-        ip = netifaces.ifaddresses(interface)[2][0]['addr']
-    except ValueError:
-        ip = '0.0.0.0'
+def get_ip_address(iscsi_network):
+
+    ip = ''
+    subnet = netaddr.IPSet([iscsi_network])
+    sz = subnet.size
+    target_ip_range = [str(ip) for ip in subnet]   # list where each element is an ip address
+
+    for local_ip in ipv4_addresses():
+        if local_ip in target_ip_range:
+            ip = local_ip
+            break
+
     return ip
-
 
 def main():
     # Configures the gateway on the host. All images defined are added to
     # the default tpg for later allocation to clients
-    fields = {"gateway_name": {"required": False, "type": "str", "default": "ceph-igw"},
-              "portal_interface": {"required": True, "type": "str"}
+    fields = {"gateway_iqn": {"required": True, "type": "str"},
+              "iscsi_network": {"required": True, "type": "str"}
               }
 
     module = AnsibleModule(argument_spec=fields,
                            supports_check_mode=False)
 
-    gateway_name = module.params['gateway_name']
-    portal_interface = module.params['portal_interface']
+    gateway_iqn = module.params['gateway_iqn']
+    iscsi_network = module.params['iscsi_network']
 
     logger.info("START - GATEWAY configuration started")
 
-    gateway = Gateway(gateway_name, portal_interface)
+    if not valid_cidr(iscsi_network):
+        module.fail_json(msg="invalid 'iscsi_network' provided - must use CIDR notation of a.b.c.d/nn")
+
+    gateway = Gateway(gateway_iqn, iscsi_network)
     if gateway.exists():
         gateway.load_config()
     else:
@@ -137,7 +182,8 @@ def main():
         if config.error:
             module.fail_json(msg=config.error_msg)
         else:
-            gateway_metadata = {"ip_address": gateway.ip_address}
+            gateway_metadata = {"portal_ip_address": gateway.ip_address,
+                                "iqn": gateway.iqn}
             config.add_item("gateways", this_host)
             config.update_item("gateways", this_host, gateway_metadata)
             config.commit()

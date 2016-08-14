@@ -8,5 +8,8 @@
   - name: ensure targetcli (LIO interface) is installed
     yum: name=targetcli state=latest
 
-  - name: ensure python-netifaces is available (used by custom module)
-    yum: name=python-netifaces state=latest
+  - name: ensure package pre-requisites are installed (used by custom modules)
+    yum: name={{ item.rpm_name }} state=latest
+    with_items:
+      - { rpm_name: "python-netifaces" }
+      - { rpm_name: "python-netaddr" }

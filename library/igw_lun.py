@@ -304,7 +304,7 @@ def main():
         logger.debug("(main) Committing change(s) to the config object in pool {}".format(pool))
         config.commit()
         if config.error:
-            module.fail_json("Unable to commit changes to config object '{}' in pool '{}'".format(config.config_name,
+            module.fail_json(msg="Unable to commit changes to config object '{}' in pool '{}'".format(config.config_name,
                                                                                                   config.pool))
 
     if not updates_made:

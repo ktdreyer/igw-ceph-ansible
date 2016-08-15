@@ -133,8 +133,8 @@ def main():
     this_host = socket.gethostname().split('.')[0]
 
     #
-    # Remove the Gateway definition
-    if run_mode == 'gateway':
+    # Purge gateway configuration, if the config has gateways
+    if run_mode == 'gateway' and len(cfg.config['gateways'].keys()) > 0:
 
         lio = LIO()
         gateway = Gateway(cfg)
@@ -155,7 +155,7 @@ def main():
             changes_made = True
             cfg.commit()
 
-    else:
+    elif run_mode == 'disks' and len(cfg.config['disks'].keys()) > 0:
         #
         # Remove the disks on this host, that have been registered in the config object
         #
@@ -188,6 +188,8 @@ def main():
         if images_left:
             module.fail_json(msg="Problems deleting the following rbd's : {}".format(','.join(images_left)))
 
+        changes_made = cfg.changed
+        
         logger.debug("ending lock state variable {}".format(cfg.config_locked))
 
 

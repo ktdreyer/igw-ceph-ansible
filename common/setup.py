@@ -19,7 +19,7 @@ class strip_py_ext(distutils.command.install_scripts.install_scripts):
 
 setup(
     name = "ceph_iscsi_gw",
-    version= "0.1.6e",
+    version= "0.2e",
     description= "Common classes/functions across the ceph-ansible-iscsi modules",
     long_description = long_description,
     author = "Paul Cuzner",

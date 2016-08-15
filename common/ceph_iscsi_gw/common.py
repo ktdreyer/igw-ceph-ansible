@@ -7,10 +7,15 @@ import os
 import traceback
 
 class ConfigTransaction(object):
-    def __init__(self, cfg_type, element_name):
+
+    def __init__(self, cfg_type, element_name, txn_action='add'):
         self.type = cfg_type
+        self.action = txn_action
         self.item_name = element_name
         self.item_content = {}
+
+    def __repr__(self):
+        return str(self.__dict__)
 
 
 class CephCluster(object):
@@ -43,7 +48,9 @@ class Config(object):
         self.error = False
         self.error_msg = ""
         self.txn_list = []
-        self.txn_ptr = 0
+        self.config_locked = False
+
+        # self.txn_ptr = 0
 
         if self.platform == 'rbd':
             self.ceph = CephCluster()
@@ -105,6 +112,7 @@ class Config(object):
         while secs < Config.lock_time_limit:
             try:
                 ioctx.lock_exclusive(self.config_name, 'lock', 'config')
+                self.config_locked = True
                 break
             except rados.ObjectBusy:
                 self.logger.debug("(Config.lock) waiting for excl lock on {} object".format(self.config_name))
@@ -124,6 +132,7 @@ class Config(object):
 
         try:
             ioctx.unlock(self.config_name, 'lock', 'config')
+            self.config_locked = False
         except Exception as e:
             self.error = True
             self.error_msg = ("Unable to unlock {} - {}".format(self.config_name,
@@ -144,7 +153,7 @@ class Config(object):
         cfg_data = ioctx.read(self.config_name)
         if not cfg_data:
             self.logger.debug("_seed_rbd_config found empty config object")
-            seed = json.dumps(Config.seed_config)
+            seed = json.dumps(Config.seed_config, sort_keys=True, indent=4, separators=(',', ': '))
             ioctx.write_full(self.config_name, seed)
             self.changed = True
 
@@ -159,7 +168,6 @@ class Config(object):
         self.logger.debug("config refresh - current config is {}".format(self.config))
         self.config = self.get_config()
 
-
     def add_item(self, cfg_type, element_name):
         self.config[cfg_type][element_name] = {}
         self.logger.debug("(Config.add_item) config updated to {}".format(self.config))
@@ -167,36 +175,59 @@ class Config(object):
 
         txn = ConfigTransaction(cfg_type, element_name)
         self.txn_list.append(txn)
-        self.txn_ptr = len(self.txn_list) - 1
+        # self.txn_ptr = len(self.txn_list) - 1
 
+    def del_item(self, cfg_type, element_name):
+        self.changed = True
+        del self.config[cfg_type][element_name]
+        self.logger.debug("(Config.del_item) config updated to {}".format(self.config))
+
+        txn = ConfigTransaction(cfg_type, element_name, 'delete')
+        self.txn_list.append(txn)
+        # self.txn_ptr = len(self.txn_list) - 1
 
     def update_item(self, cfg_type, element_name, attr_dict):
         self.config[cfg_type][element_name] = attr_dict
         self.logger.debug("(Config.update_item) config is {}".format(self.config))
         self.changed = True
         self.logger.debug("update_item: type={}, item={}, update={}".format(cfg_type,element_name,attr_dict))
-        self.logger.debug("update_item point ; txn list length is {}, ptr is set to {}".format(len(self.txn_list),
-                                                                                                   self.txn_ptr))
-        self.txn_list[self.txn_ptr].item_content = attr_dict
+        # self.logger.debug("update_item point ; txn list length is {}, ptr is set to {}".format(len(self.txn_list),
+        #                                                                                            self.txn_ptr))
+        txn = ConfigTransaction(cfg_type, element_name, 'add')
+        txn.item_content = attr_dict
+        self.txn_list.append(txn)
+        # self.txn_ptr = len(self.txn_list) - 1
 
-    def _commit_rbd(self, config_str):
+    def _commit_rbd(self):
 
-        self.logger.debug("_commit_rbd updating config with {}".format(config_str))
+        # self.logger.debug("_commit_rbd updating config with {}".format(config_str))
 
         ioctx = self.ceph.cluster.open_ioctx(self.pool)
 
-        self.lock()
-        if self.error:
-            return
+        if not self.config_locked:
+            self.lock()
+            if self.error:
+                return
 
         # reread the config to account for updates made by other systems
         # then apply this hosts update(s)
         current_config = json.loads(ioctx.read(self.config_name))
         for txn in self.txn_list:
-            current_config[txn.type][txn.item_name] = txn.item_content
 
-        config_str = json.dumps(current_config)
-        ioctx.write_full(self.config_name, config_str)
+            self.logger.debug("_commit_rbd transaction shows {}".format(txn))
+            if txn.action == 'add':         # add's and updates
+                current_config[txn.type][txn.item_name] = txn.item_content
+            elif txn.action == 'delete':
+                del current_config[txn.type][txn.item_name]
+            else:
+                self.error = True
+                self.error_msg = "Unknown transaction type ({}} encountered in _commit_rbd".format(txn.action)
+
+        if not self.error:
+            config_str = json.dumps(current_config)
+            self.logger.debug("_commit_rbd updating config to {}".format(config_str))
+            config_str_fmtd = json.dumps(current_config, sort_keys=True, indent=4, separators=(',', ': '))
+            ioctx.write_full(self.config_name, config_str_fmtd)
 
         self.unlock()
         ioctx.close()
@@ -207,9 +238,12 @@ class Config(object):
         pass
 
     def commit(self):
-        config_str = json.dumps(self.config)
-        self.logger.debug("(Config.commit) Config being updated to {}".format(config_str))
-        self.commit_config(config_str)
+
+        # config_str = json.dumps(self.config)
+        # self.logger.debug("(Config.commit) Config being updated to {}".format(config_str))
+
+        # not sure config_str is actually needed
+        self.commit_config()        # (config_str)
 
     @classmethod
     def get_platform(cls):

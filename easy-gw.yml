@@ -1,6 +1,6 @@
 ---
 - name: Configure target hosts as LIO gateways for Ceph/Glusterfs
-  hosts: ceph
+  hosts: ceph_iscsi_gw
 
   tasks:
     - name: OS Compatibility Check (RHEL 7.3)

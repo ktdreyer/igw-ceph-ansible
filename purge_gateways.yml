@@ -1,0 +1,32 @@
+---
+- name: Confirm removal of the iSCSI gateway configuration
+  hosts: localhost
+
+  vars_prompt:
+    - name: ireallymeanit
+      prompt: Are you sure you want to purge the configuration? (yes or no)
+      default: 'no'
+      private: no
+
+  tasks:
+    - name: Exit playbook if user aborted the purge
+      fail:
+        msg: >
+          "You gave aborted the purge of the iSCSI gateway configuration.
+          To go ahead and purge the configuration, reply yes to the prompt or
+          use -e ireallymeanit=yes on the command line when invoking the
+          playbook"
+      when: ireallymeanit != 'yes'
+
+
+- name: Purge the iscsi gateway configuration
+  hosts: ceph_iscsi_gw
+
+  tasks:
+    - name: Stage 1 - purging the gateway configuration
+      igw_purge: mode="gateway"
+
+    - name: Stage 2 - deleting configured rbd devices
+      igw_purge: mode="disks"
+
+

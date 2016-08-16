@@ -21,12 +21,19 @@
     - name: Configure LUNs (create/map rbds and add to LIO)
       igw_lun: pool={{ item.pool }} image={{item.image}} size={{ item.size }} host={{ item.host }}
       with_items: "{{ rbd_devices }}"
+      register: luns
 
     - name: Configure iSCSI Gateway
       gateway: gateway_iqn={{ gateway_iqn }} iscsi_network={{ iscsi_network }}
+      register: gateway
 
     - name: Configure a client connectivity group
       client: client_iqn={{ item.client }} image_list={{item.image_list}} auth='chap' credentials={{ item.credentials }}
       with_items: "{{ client_connections }}"
+      register: clients
+
+    - name: Save the LIO config if changes are made from prior tasks
+      command: /usr/bin/targetcli saveconfig
+      when: (luns.changed or gateway.changed or clients.changed)
 
 

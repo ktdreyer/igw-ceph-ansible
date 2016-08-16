@@ -61,7 +61,7 @@ class Gateway(LIO):
         self.config = config_object
 
     def session_count(self):
-        return len([s for s in self.lio_root.sessions])
+        return len(list(self.lio_root.sessions))
 
     def drop_target(self, this_host):
         iqn = self.config.config['gateways'][this_host]['iqn']
@@ -189,7 +189,7 @@ def main():
             module.fail_json(msg="Problems deleting the following rbd's : {}".format(','.join(images_left)))
 
         changes_made = cfg.changed
-        
+
         logger.debug("ending lock state variable {}".format(cfg.config_locked))
 
 

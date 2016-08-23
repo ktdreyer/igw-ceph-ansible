@@ -15,7 +15,7 @@ import rbd
 
 from ansible.module_utils.basic import *
 from rtslib_fb import BlockStorageObject, root
-from rtslib_fb.utils import RTSLibError
+from rtslib_fb.utils import RTSLibError, fwrite, fread
 
 from ceph_iscsi_gw.common import Config
 
@@ -96,14 +96,14 @@ def rbd_mapped(rbd_map_output, image, pool='rbd'):
 
 
 def lun_in_lio(image):
-    lun_state = False
+    found_it = False
     rtsroot = root.RTSRoot()
     for stg_object in rtsroot.storage_objects:
         if stg_object.name == image:
-            lun_state = True
+            found_it = True
             break
 
-    return lun_state
+    return stg_object if found_it else None
 
 
 def rbd_create(module, image, size, pool):
@@ -121,6 +121,7 @@ def rbd_add_device(module, image, device_path, in_wwn=None):
     new_lun = None
     try:
         new_lun = BlockStorageObject(name=image, dev=device_path, wwn=in_wwn)
+        set_alua(new_lun, "standby")
     except RTSLibError as err:
         module.fail_json(msg="failed to add {} to LIO - error({})".format(image, str(err)))
 
@@ -147,14 +148,14 @@ def rbd_size(module, image, reqd_size, pool):
     return changes_made
 
 
-def is_this_host(tgt_hostname):
-    this_host = gethostname()
-    if '.' in tgt_hostname:
-        tgt_hostname = tgt_hostname.split('.')[0]
-    if '.' in this_host:
-        this_host = this_host.split('.')[0]
-
-    return this_host == tgt_hostname
+# def is_this_host(tgt_hostname):
+#     this_host = gethostname()
+#     if '.' in tgt_hostname:
+#         tgt_hostname = tgt_hostname.split('.')[0]
+#     if '.' in this_host:
+#         this_host = this_host.split('.')[0]
+#
+#     return this_host == tgt_hostname
 
 
 def get_rbds(module, pool):
@@ -164,6 +165,37 @@ def get_rbds(module, pool):
         module.fail_json(msg="failed to execute {}".format(list_rbds))
 
     return json.loads(rbd_str)
+
+
+def set_alua(lun, desired_state='standby'):
+    alua_state = {"active": '0',
+                  "active/unoptimized": '1',
+                  "standby": '2'}
+    configfs_path = lun.path
+    lun_name = lun.name
+    alua_path = 'alua/default_tg_pt_gp/alua_access_state'
+
+    full_path = os.path.join(configfs_path, alua_path)
+    if fread(full_path) != alua_state[desired_state]:
+        logger.debug("updating alua_access_state for {} to {}".format(lun_name,
+                                                                      desired_state))
+        fwrite(full_path, alua_state[desired_state])
+    else:
+        logger.debug("skipping alua update - already set to desired state '{}'".format(desired_state))
+        pass
+
+
+
+def set_owner(gateways):
+    # turn the dict into a list of tuples
+    gw_items = gateways.items()
+
+    # first entry is the lowest number of active_luns
+    gw_items.sort(key=lambda x: (x[1]['active_luns']))
+
+    # 1st tuple is gw with lowest active_luns, so return the 1st
+    # element which is the hostname
+    return gw_items[0][0]
 
 
 def main():
@@ -214,13 +246,17 @@ def main():
         module.fail_json(msg="Storage platform not supported. Only Ceph is currently supported.")
 
     logger.info("START - LUN configuration started for {} {}/{}".format(config.platform, pool, image))
+
     # first look at disks in the specified pool
     disk_list = get_disks(module, pool)
+    this_host = gethostname().split('.')[0]
+    logger.debug("Hostname Check - this host is {}, target host for allocations is {}".format(this_host,
+                                                                                              target_host))
 
     # if the image required isn't defined, create it!
     if image not in disk_list:
         # create the requested disk if this is the 'owning' host
-        if is_this_host(target_host):
+        if this_host == target_host:            # is_this_host(target_host):
 
             create_disk(module, image, size, pool)
 
@@ -244,10 +280,9 @@ def main():
             config.add_item('disks', image)
         pass
 
-
     if config.platform == 'rbd':
         # if updates_made is not set, the disk pre-exists so on the owning host see if it needs to be resized
-        if not updates_made and is_this_host(target_host):
+        if not updates_made and this_host == target_host:       # is_this_host(target_host):
 
             # check the size, and update if needed
             changed = rbd_size(module, image, size, pool)
@@ -261,18 +296,39 @@ def main():
             num_changes += 1
 
     # now see if we need to add this rbd image to LIO
-    if not lun_in_lio(image):
-        # this image has not been added to LIO, so add it, get the wwn and update the
-        # config if this is the owning host
-        if is_this_host(target_host):
-            lun = add_device(module, image, map_device)
-            wwn = lun._get_wwn()
-            disk_attr = {"wwn": wwn, "owner": ""}
-            config.update_item('disks', image, disk_attr)
+    lun = lun_in_lio(image)
+    if not lun:
+        # this image has not been defined to LIO, so check the config for the details and
+        # if it's  missing define the wwn/alua_state and update the config
+
+        if this_host == target_host:
+            # first check to see if the device needs adding
+            wwn = config.config['disks'][image]['wwn']
+            if wwn == '':
+                # disk hasn't been defined before
+                lun = add_device(module, image, map_device)
+                wwn = lun._get_wwn()
+                owner = set_owner(config.config['gateways'])
+
+                disk_attr = {"wwn": wwn, "owner": owner}
+                config.update_item('disks', image, disk_attr)
+
+                gateway_dict = config.config['gateways'][owner]
+                gateway_dict['active_luns'] += 1
+
+                config.update_item('gateways', owner, gateway_dict)
+
+                logger.debug("(main) registered '{}' with wwn '{}' with the config object".format(image, wwn))
+                logger.info("(main) added '{}/{}' to LIO".format(pool, image))
+
+            else:
+                # config already has wwn and owner information
+                lun = add_device(module, image, map_device, wwn)
+                logger.debug("(main) registered '{}' with wwn '{}' from the config object".format(image, wwn))
+
             updates_made = True
-            logger.debug("(main) registered '{}' with wwn '{}' with the config file".format(image, wwn))
-            logger.info("(main) added '{}/{}' to LIO".format(pool, image))
             num_changes += 1
+
         else:
             # lun is not already in LIO, but this is not the owning node that defines the wwn
             # we need the wwn from the config (placed by the owning node), so we wait!
@@ -292,6 +348,7 @@ def main():
 
             # At this point we have a usable config, so we just need to add the wwn
             lun = add_device(module, image, map_device, wwn)
+
             logger.debug("(main) added {} to LIO using wwn '{}' defined by {}".format(image,
                                                                                       wwn,
                                                                                       target_host))
@@ -299,8 +356,18 @@ def main():
             updates_made = True
             num_changes += 1
 
-    if is_this_host(target_host) and config.changed:
-        # config is only written by the owning host of the image
+    # lun/image is defined to LIO, so just check the preferred alua state is OK
+    if config.config['disks'][image]["owner"] == this_host:
+        # get LUN object for this image
+        logger.info("Setting alua state to active for image {}".format(image))
+        set_alua(lun, 'active')
+    else:
+        logger.info("Setting alua state to standby for image {}".format(image))
+        set_alua(lun, 'standby')
+
+    # the owning host for an image is the only host that commits to the config
+    if this_host == target_host and config.changed:
+
         logger.debug("(main) Committing change(s) to the config object in pool {}".format(pool))
         config.commit()
         if config.error:

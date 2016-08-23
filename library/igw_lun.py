@@ -168,23 +168,29 @@ def get_rbds(module, pool):
 
 
 def set_alua(lun, desired_state='standby'):
-    alua_state = {"active": '0',
-                  "active/unoptimized": '1',
-                  "standby": '2'}
+    alua_state_options = {"active": '0',
+                          "active/unoptimized": '1',
+                          "standby": '2'}
     configfs_path = lun.path
     lun_name = lun.name
-    alua_path = 'alua/default_tg_pt_gp/alua_access_state'
+    alua_access_state = 'alua/default_tg_pt_gp/alua_access_state'
+    alua_access_type = 'alua/default_tg_pt_gp/alua_access_type'
+    type_fullpath = os.path.join(configfs_path, alua_access_type)
 
-    full_path = os.path.join(configfs_path, alua_path)
-    if fread(full_path) != alua_state[desired_state]:
-        logger.debug("updating alua_access_state for {} to {}".format(lun_name,
-                                                                      desired_state))
-        fwrite(full_path, alua_state[desired_state])
+    if fread(type_fullpath) != 'Implicit':
+        logger.info("(set_alua) Switching device alua access type to Implicit - i.e. active path set by gateways")
+        fwrite(type_fullpath, '1')
     else:
-        logger.debug("skipping alua update - already set to desired state '{}'".format(desired_state))
-        pass
+        logger.debug("(set_alua) lun alua_access_type already set to Implicit - no change needed")
 
-
+    state_fullpath = os.path.join(configfs_path, alua_access_state)
+    if fread(state_fullpath) != alua_state_options[desired_state]:
+        logger.debug("(set_alua) Updating alua_access_state for {} to {}".format(lun_name,
+                                                                                 desired_state))
+        fwrite(state_fullpath, alua_state_options[desired_state])
+    else:
+        logger.debug("(set_alua) Skipping alua update - already set to desired state '{}'".format(desired_state))
+ 
 
 def set_owner(gateways):
     # turn the dict into a list of tuples

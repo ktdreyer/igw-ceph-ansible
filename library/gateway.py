@@ -152,7 +152,11 @@ def main():
     # Configures the gateway on the host. All images defined are added to
     # the default tpg for later allocation to clients
     fields = {"gateway_iqn": {"required": True, "type": "str"},
-              "iscsi_network": {"required": True, "type": "str"}
+              "iscsi_network": {"required": True, "type": "str"},
+              "mode": {
+                  "required": True,
+                  "choices": ['target', 'map']
+                  }
               }
 
     module = AnsibleModule(argument_spec=fields,
@@ -160,38 +164,56 @@ def main():
 
     gateway_iqn = module.params['gateway_iqn']
     iscsi_network = module.params['iscsi_network']
-
-    logger.info("START - GATEWAY configuration started")
+    mode = module.params['mode']
 
     if not valid_cidr(iscsi_network):
-        module.fail_json(msg="invalid 'iscsi_network' provided - must use CIDR notation of a.b.c.d/nn")
+        module.fail_json(msg="Invalid 'iscsi_network' provided - must use CIDR notation of a.b.c.d/nn")
+
+    logger.info("START - GATEWAY configuration started in mode {}".format(mode))
 
     gateway = Gateway(gateway_iqn, iscsi_network)
-    if gateway.exists():
-        gateway.load_config()
-    else:
-        gateway.create_target()
 
-    if gateway.error:
-        logger.critical("(main) Gateway creation or load failed, unable to continue")
-        module.fail_json(msg="iSCSI gateway creation/load failure ({})".format(gateway.error_msg))
-    else:
-        # ensure that the config has an entry for this gateway
-        this_host = socket.gethostname().split('.')[0]
-        config = Config(logger)
-        if config.error:
-            module.fail_json(msg=config.error_msg)
+    if mode == 'target':
+
+        if gateway.exists():
+            gateway.load_config()
         else:
-            gateway_metadata = {"portal_ip_address": gateway.ip_address,
-                                "iqn": gateway.iqn}
-            config.add_item("gateways", this_host)
-            config.update_item("gateways", this_host, gateway_metadata)
-            config.commit()
+            gateway.create_target()
 
-    gateway.map_luns()
-    if gateway.error:
-        logger.critical("(main) LUN mapping to the tpg failed, unable to continue")
-        module.fail_json(msg="iSCSI LUN mapping to tpg1 failed ({})".format(gateway.error_msg))
+        if gateway.error:
+            logger.critical("(main) Gateway creation or load failed, unable to continue")
+            module.fail_json(msg="iSCSI gateway creation/load failure ({})".format(gateway.error_msg))
+        else:
+            # ensure that the config object has an entry for this gateway
+            this_host = socket.gethostname().split('.')[0]
+            config = Config(logger)
+            if config.error:
+                module.fail_json(msg=config.error_msg)
+            else:
+                if this_host not in config.config['gateways'].keys():
+                    gateway_metadata = {"portal_ip_address": gateway.ip_address,
+                                        "iqn": gateway.iqn,
+                                        "active_luns": 0}
+
+                    config.add_item("gateways", this_host)
+                    config.update_item("gateways", this_host, gateway_metadata)
+                    config.commit()
+
+    elif mode == 'map':
+
+        # assume that if the iqn exists, we put it there, so the config object is OK
+        if gateway.exists():
+
+            gateway.load_config()
+
+            gateway.map_luns()
+
+            if gateway.error:
+                logger.critical("(main) LUN mapping to the tpg failed, unable to continue")
+                module.fail_json(msg="iSCSI LUN mapping to tpg1 failed ({})".format(gateway.error_msg))
+        else:
+            module.fail_json(msg="Attempted to map to a gateway '{}' that hasn't been defined yet..."
+                                 "out of order steps?".format(gateway_iqn))
 
     logger.info("END - GATEWAY configuration complete")
     module.exit_json(changed=gateway.changes_made, meta={"msg": "Gateway setup complete"})

@@ -8,13 +8,13 @@ functional tasks
 * definition of rbd images (including resize support)  
 * iSCSI gateway creation (single tpg, single portal, initial lun maps)  
 * Client assignment (registering clients to LIO, chap authentication, and associating the client to specific rbd images)  
-* lun/gateway balancing (backlog item!)  
+* balance alua active/standby state across gateway nodes (performed during addition of new rbd image to the configuration)    
   
 In addition to building the required configuration, the project also provide a playbook for purging the gateway configuration including the removal of rbd's.
 
 ##Prerequisites  
 * a working ceph cluster ( *rbd pool defined* )  
-* nodes intended to be gateways should be at least ceph clients  
+* nodes intended to be gateways should be at least ceph clients, with the ability to create and map rbd images  
 * ansible installed on a *controller*, with passwordless ssh set up between the controller and the gateway nodes  
 
 ##Quick Start
@@ -48,6 +48,7 @@ In addition to building the required configuration, the project also provide a p
 - checks the size of the rbds at run time and expands if necessary
 - maps the rbds to the host (gateway)
 - maps these rbds to LIO
+- once mapped, the alua state for the lun is set to active or passive - active paths are balanced across the gateways
 - creates an iscsi target - common iqn, and tpg
 - adds a portal ip based on a given network CIDR
 - adds all the mapped luns to the tpg (ready for client assignment)
@@ -57,3 +58,9 @@ In addition to building the required configuration, the project also provide a p
   removed from the variables file
 - configuration can be wiped with the purge_cluster playbook
 - current state can be seen by looking at the configuration object (stored in the rbd pool)
+
+##Known Issues  
+1. Preferred path state on a gateway can be lost following either a gateway reboot, or a restart of the target service  
+  **Workaround**: Rerun the playbook to correct preferred paths following gateway or target service restart    
+  **Issue**: The *rtslib* 'save_to_file' call does **not** persist alua state information in the saveconfig.json file, so when the service restarts the alua_access_state defaults to 0 (active)  
+    

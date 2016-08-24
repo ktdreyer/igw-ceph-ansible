@@ -190,7 +190,7 @@ def set_alua(lun, desired_state='standby'):
         fwrite(state_fullpath, alua_state_options[desired_state])
     else:
         logger.debug("(set_alua) Skipping alua update - already set to desired state '{}'".format(desired_state))
- 
+
 
 def set_owner(gateways):
     # turn the dict into a list of tuples

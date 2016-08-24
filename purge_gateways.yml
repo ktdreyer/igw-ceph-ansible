@@ -1,32 +1,35 @@
 ---
+
 - name: Confirm removal of the iSCSI gateway configuration
   hosts: localhost
 
   vars_prompt:
-    - name: ireallymeanit
-      prompt: Are you sure you want to purge the configuration? (yes or no)
-      default: 'no'
+    - name: purge_config
+      prompt: Which configuration elements should be purged? (all, lio or abort)"
+      default: 'abort'
       private: no
 
   tasks:
     - name: Exit playbook if user aborted the purge
       fail:
         msg: >
-          "You gave aborted the purge of the iSCSI gateway configuration.
-          To go ahead and purge the configuration, reply yes to the prompt or
-          use -e ireallymeanit=yes on the command line when invoking the
-          playbook"
-      when: ireallymeanit != 'yes'
+          "You have aborted the purge of the iSCSI gateway configuration"
+      when: purge_config == 'abort'
 
+    - set_fact:
+        igw_purge_type: "{{ purge_config }}"
 
-- name: Purge the iscsi gateway configuration
+- name: Removing the gateway configuration
   hosts: ceph_iscsi_gw
+  vars:
+    - igw_purge_type: "{{hostvars['localhost']['igw_purge_type']}}"
 
   tasks:
-    - name: Stage 1 - purging the gateway configuration
+    - name: igw_purge | purging the gateway configuration
       igw_purge: mode="gateway"
 
-    - name: Stage 2 - deleting configured rbd devices
+    - name: igw_purge | deleting configured rbd devices
       igw_purge: mode="disks"
+      when: igw_purge_type == 'all'
 
 

@@ -343,8 +343,9 @@ def main():
                 config.refresh()
                 if image in config.config['disks']:
                     if 'wwn' in config.config['disks'][image]:
-                        wwn = config.config['disks'][image]['wwn']
-                        break
+                        if config.config['disks'][image]['wwn']:
+                            wwn = config.config['disks'][image]['wwn']
+                            break
                 sleep(LOOP_DELAY)
                 waiting += LOOP_DELAY
                 logger.debug("waiting for config object to show {} with it's wwn".format(image))

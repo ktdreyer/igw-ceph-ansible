@@ -4,12 +4,15 @@
 # passed as an inventory to ansible-playbook (-i)
 
 gateway_iqn: "iqn.2003-01.com.redhat.iscsi-gw:ceph-igw"
-iscsi_network: "10.90.90.0/24"
+iscsi_network: "192.168.122.0/24"
 
 rbd_devices:
-  - { pool: 'rbd', image: 'ansible1', size: '10G', host: 'rhceph-1'}
-  - { pool: 'rbd', image: 'ansible2', size: '15G', host: 'rhceph-1'}
-  - { pool: 'rbd', image: 'ansible3', size: '20G', host: 'rhceph-1'}
+  - { pool: 'rbd', image: 'ansible1', size: '30G', host: 'ceph-1'}
+  - { pool: 'rbd', image: 'ansible2', size: '15G', host: 'ceph-1'}
+  - { pool: 'rbd', image: 'ansible3', size: '20G', host: 'ceph-1'}
+  - { pool: 'rbd', image: 'ansible4', size: '10G', host: 'ceph-1'}
+#  - { pool: 'rbd', image: 'ansible5', size: '10G', host: 'rhceph-1'}
 
 client_connections:
-  - { client: 'iqn.1994-05.com.redhat:rh7-iscsi-client', image_list: ['ansible1','ansible2'], credentials: 'rh7-iscsi-client/redhat' }
+  - { client: 'iqn.1994-05.com.redhat:rh7-iscsi-client', image_list: ['ansible1','ansible2'], credentials: 'rh7-iscsi-client/redhat', status: 'present' }
+  - { client: 'iqn.1991-05.com.microsoft:w2k12r2', image_list: ['ansible3'], credentials: 'w2k12r2/microsoft_w2k12', status: 'present' }

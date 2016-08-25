@@ -263,8 +263,7 @@ def main():
             "type": "str"
         },
         "state": {
-            "required": False,
-            "default": "present",
+            "required": True,
             "choices": ['present', 'absent'],
             "type": "str"
             },

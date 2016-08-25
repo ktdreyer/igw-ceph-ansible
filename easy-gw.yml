@@ -18,21 +18,21 @@
         - { rpm_name: "python-netifaces" }
         - { rpm_name: "python-netaddr" }
 
-    - name: Configure iSCSI Target (gateway)
+    - name: gateway (tgt) | Configure iSCSI Target (gateway)
       gateway: mode='target' gateway_iqn={{ gateway_iqn }} iscsi_network={{ iscsi_network }}
       register: target
 
-    - name: Configure LUNs (create/map rbds and add to LIO)
+    - name: igw_lun | Configure LUNs (create/map rbds and add to LIO)
       igw_lun: pool={{ item.pool }} image={{item.image}} size={{ item.size }} host={{ item.host }}
       with_items: "{{ rbd_devices }}"
       register: images
 
-    - name: Map LUNs to the iSCSI target
+    - name: gateway (map) | Map LUNs to the iSCSI target
       gateway: mode='map' gateway_iqn={{ gateway_iqn }} iscsi_network={{ iscsi_network }}
       register: luns
 
-    - name: Configure a client connectivity group
-      client: client_iqn={{ item.client }} image_list={{item.image_list}} auth='chap' credentials={{ item.credentials }}
+    - name: igw_client | Configure a client connectivity
+      igw_client: client_iqn={{ item.client }} image_list={{item.image_list}} auth='chap' credentials={{ item.credentials }}
       with_items: "{{ client_connections }}"
       register: clients
 

@@ -5,7 +5,7 @@
 
   vars_prompt:
     - name: purge_config
-      prompt: Which configuration elements should be purged? (all, lio or abort)"
+      prompt: Which configuration elements should be purged? (all, lio or abort)
       default: 'abort'
       private: no
 

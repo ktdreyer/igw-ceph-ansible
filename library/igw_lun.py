@@ -244,6 +244,11 @@ def main():
     if config.error:
         module.fail_json(msg=config.error_msg)
 
+    # Before we start make sure that the target host is actually defined to the config
+    if target_host not in config.config['gateways'].keys():
+        logger.critical("target host is not valid, please check the config for this image")
+        module.fail_json(msg="(main) host name given for {} is not a valid gateway name".format(image))
+
     if config.platform == 'rbd':
         add_device = rbd_add_device
         get_disks = get_rbds
@@ -309,7 +314,11 @@ def main():
 
         if this_host == target_host:
             # first check to see if the device needs adding
-            wwn = config.config['disks'][image]['wwn']
+            try:
+                wwn = config.config['disks'][image]['wwn']
+            except KeyError:
+                wwn = ''
+
             if wwn == '':
                 # disk hasn't been defined before
                 lun = add_device(module, image, map_device)

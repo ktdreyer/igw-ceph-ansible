@@ -8,7 +8,6 @@ from logging.handlers import RotatingFileHandler
 
 from socket import gethostname
 from time import sleep
-import tempfile
 import os
 import rados
 import rbd
@@ -20,10 +19,17 @@ from rtslib_fb.utils import RTSLibError, fwrite, fread
 from ceph_iscsi_gw.common import Config
 
 SIZE_SUFFIXES = ['M', 'G', 'T']
+CEPH_CONF = '/etc/ceph/ceph.conf'
 
-RBD_FEATURES = ['--image-format 2',
-                '--image-shared',
-                '--image-feature layering']
+# remove this list, once the rbd handling works through the rbd module
+# RBD_FEATURES = ['--image-format 2',
+#                 '--image-shared',
+#                 '--image-feature layering']
+
+# RBD_FEATURE_LIST lists the features needs for an rbd image to be exported correctly via
+# LIO to iSCSI clients
+RBD_FEATURE_LIST = ['RBD_FEATURE_LAYERING']
+
 TIME_OUT_SECS = 30
 LOOP_DELAY = 2
 
@@ -53,14 +59,6 @@ def valid_size(size):
 
     return valid
 
-# with rados.Rados(conffile='my_ceph.conf') as cluster:
-#     with cluster.open_ioctx('mypool') as ioctx:
-#         rbd_inst = rbd.RBD()
-#         size = 4 * 1024**3  # 4 GiB
-#         rbd_inst.create(ioctx, 'myimage', size)
-#         with rbd.Image(ioctx, 'myimage') as image:
-#             data = 'foo' * 200
-#             image.write(data, 0)
 
 def get_rbd_map(module, image, pool):
     changed = False
@@ -106,17 +104,46 @@ def lun_in_lio(image):
     return stg_object if found_it else None
 
 
-def rbd_create(module, image, size, pool):
-    create_rbd = 'rbd create {} --size {} --pool {} {}'.format(image,
-                                                               size,
-                                                               pool,
-                                                               ' '.join(RBD_FEATURES))
-    rc, rbd_out, err = module.run_command(create_rbd)
-    if rc != 0:
-        module.fail_json(msg="failed to create rbd with '{}'".format(create_rbd))
+def rbd_create(image, size, pool):
+    """
+    Create an rbd image compatible with exporting through LIO to multiple clients
+    :param image: image name (str)
+    :param size: size of the image to create nX - where n is an int, and X is the unit M,G,T
+    :param pool: pool (str) to use for the allocation
+    :return: status code and msg
+    """
+    rc = 0
+    msg = ''
+    size_bytes = convert_2_bytes(size)
+
+    # build the required feature settings into an int
+    feature_int = 0
+    for feature in RBD_FEATURE_LIST:
+        feature_int += getattr(rbd, feature)
+
+    with rados.Rados(conffile=CEPH_CONF) as cluster:
+        with cluster.open_ioctx(pool) as ioctx:
+            rbd_inst = rbd.RBD()
+            try:
+                rbd_inst.create(ioctx, image, size_bytes, features=feature_int, old_format=False)
+            except (rbd.ImageExists, rbd.InvalidArgument) as err:
+                rc = 12
+                msg = "Failed to create rbd image {} in pool {} : {}".format(image,
+                                                                             pool,
+                                                                             err)
+    return rc, msg
 
 
 def rbd_add_device(module, image, device_path, in_wwn=None):
+    """
+    Add an rbd device to the LIO configuration
+    :param module: ansible module used to run CLI commands
+    :param image: rbd image name (str)
+    :param device_path: path for the device e.g. /dev/rbdX
+    :param in_wwn: optional wwn identifying the rbd image to clients - must match across gateways
+    :return: LIO LUN object
+    """
+
     logger.info("(add_device) Adding image '{}' with path {} to LIO".format(image, device_path))
     new_lun = None
     try:
@@ -127,47 +154,75 @@ def rbd_add_device(module, image, device_path, in_wwn=None):
 
     return new_lun
 
-def rbd_size(module, image, reqd_size, pool):
-    changes_made = False
-    # get the current device size
-    rc, rbd_info, err = module.run_command("rbd info {}/{} --format=json".format(pool,
-                                                                                 image))
-    if rc != 0:
-        module.fail_json(msg="(rbd_size) unable to get rbd information")
-    rbd_json = json.loads(rbd_info)
-    image_size = int(rbd_json['size'])
-    tgt_bytes = convert_2_bytes(reqd_size)
 
-    if tgt_bytes > image_size:
-        rc, rsize_out, error = module.run_command("rbd resize -s {} {}/{}".format(reqd_size, pool, image))
-        if rc != 0:
-            module.fail_json(msg="(rbd_size) failed to resize {}/{} to {}".format(pool, image, reqd_size))
-        logger.info("(rbd_size) resized {}/{} to {}".format(pool, image, reqd_size))
-        changes_made = True
+def rbd_size(image, reqd_size, pool):
+    """
+    Confirm that the existing rbd image size, matches the requirement passed in the ansible
+    config file - if the required size is > than current, resize the rbd image to match
+    :param image: rbd image name (str)
+    :param reqd_size: size (str) of the form nX - where n is integer, and X the unit M, G, T
+    :param pool: pool (str) where the rbd images exists
+    :return: boolean value reflecting whether the rbd image was resized
+    """
+
+    changes_made = False
+
+    with rados.Rados(conffile=CEPH_CONF) as cluster:
+        with cluster.open_ioctx(pool) as ioctx:
+            with rbd.Image(ioctx, image) as rbd_image:
+
+                logger.debug('rbd image {} opened OK'.format(image))
+
+                # get the current size in bytes
+                current_bytes = rbd_image.size()     # bytes
+                target_bytes = convert_2_bytes(reqd_size)
+
+                if target_bytes > current_bytes:
+                    logger.debug("rbd image {} size needs to be changed".format(image))
+
+                    # resize method, doesn't document potential exceptions
+                    rbd_image.resize(target_bytes)
+                    logger.info("(rbd_size) resized {}/{} to {}".format(pool, image, reqd_size))
+                    changes_made = True
 
     return changes_made
 
 
-# def is_this_host(tgt_hostname):
-#     this_host = gethostname()
-#     if '.' in tgt_hostname:
-#         tgt_hostname = tgt_hostname.split('.')[0]
-#     if '.' in this_host:
-#         this_host = this_host.split('.')[0]
-#
-#     return this_host == tgt_hostname
+def rbd_list(pool):
+    """
+    return a list of rbd images in a given pool
+    :param pool: pool name to look at to return a list of rbd image names for (str)
+    :return: list of rbd image names (list)
+    """
+
+    with rados.Rados(conffile=CEPH_CONF) as cluster:
+        with cluster.open_ioctx(pool) as ioctx:
+            rbd_inst = rbd.RBD()
+            rbd_names = rbd_inst.list(ioctx)
+    return rbd_names
 
 
-def get_rbds(module, pool):
-    list_rbds = 'rbd -p {} ls --format=json'.format(pool)
-    rc, rbd_str, err = module.run_command(list_rbds)
-    if rc != 0:
-        module.fail_json(msg="failed to execute {}".format(list_rbds))
+def rados_pool(pool):
+    """
+    determine if a given pool name is defined within the ceph cluster
+    :param pool: pool name to check for (str)
+    :return: Boolean representing the pool's existence
+    """
 
-    return json.loads(rbd_str)
+    with rados.Rados(conffile=CEPH_CONF) as cluster:
+        pool_list = cluster.list_pools()
+
+    return pool in pool_list
 
 
 def set_alua(lun, desired_state='standby'):
+    """
+    Sets the ALUA state of a LUN (active/standby)
+    :param lun: LIO LUN object
+    :param desired_state: active or standby state
+    :return: None
+    """
+
     alua_state_options = {"active": '0',
                           "active/unoptimized": '1',
                           "standby": '2'}
@@ -193,6 +248,14 @@ def set_alua(lun, desired_state='standby'):
 
 
 def set_owner(gateways):
+    """
+    Determine the gateway in the configuration with the lowest number of active LUNs. This
+    gateway is then selected as the owner for the primary path of the current LUN being
+    processed
+    :param gateways: gateway dict returned from the RADOS configuration object
+    :return: specific gateway hostname (str) that should provide the active path for the next LUN
+    """
+
     # turn the dict into a list of tuples
     gw_items = gateways.items()
 
@@ -246,20 +309,23 @@ def main():
 
     # Before we start make sure that the target host is actually defined to the config
     if target_host not in config.config['gateways'].keys():
-        logger.critical("target host is not valid, please check the config for this image")
+        logger.critical("target host is not valid, please check the config entry for this rbd image")
         module.fail_json(msg="(main) host name given for {} is not a valid gateway name".format(image))
 
-    if config.platform == 'rbd':
-        add_device = rbd_add_device
-        get_disks = get_rbds
-        create_disk = rbd_create
-    else:
+    if config.platform != 'rbd':
         module.fail_json(msg="Storage platform not supported. Only Ceph is currently supported.")
 
     logger.info("START - LUN configuration started for {} {}/{}".format(config.platform, pool, image))
 
+    # ensure the rbd pool is valid
+    if not rados_pool(pool):
+        # Could create the pool, but a fat finger moment in the config file would mean rbd images
+        # get created and mapped, and then need correcting. Better to exit if the pool doesn't exist
+        module.fail_json(msg="Pool '{}' does not exist. Unable to continue")
+
     # first look at disks in the specified pool
-    disk_list = get_disks(module, pool)
+    disk_list = rbd_list(pool)
+    logger.debug("rbd pool contains the following - {}".format(disk_list))
     this_host = gethostname().split('.')[0]
     logger.debug("Hostname Check - this host is {}, target host for allocations is {}".format(this_host,
                                                                                               target_host))
@@ -269,19 +335,22 @@ def main():
         # create the requested disk if this is the 'owning' host
         if this_host == target_host:            # is_this_host(target_host):
 
-            create_disk(module, image, size, pool)
+            rc, msg = rbd_create(image, size, pool)
+            if rc == 0:
+                config.add_item('disks', image)
+                updates_made = True
+                logger.info("(main) created {}/{} successfully".format(image, pool))
+                num_changes += 1
+            else:
+                module.fail_json("(main) problem creating rbd image {} : {}".format(image, msg))
 
-            config.add_item('disks', image)
-            updates_made = True
-            logger.info("(main) created {}/{} successfully".format(image, pool))
-            num_changes += 1
         else:
             # the image isn't there, and this isn't the 'owning' host
             # so wait until the disk arrives
             waiting = 0
             while image not in disk_list:
                 sleep(LOOP_DELAY)
-                disk_list = get_disks(module, pool)
+                disk_list = rbd_list(pool)
                 waiting += LOOP_DELAY
                 if waiting >= TIME_OUT_SECS:
                     module.fail_json(msg="(main) timed out waiting for rbd to show up")
@@ -289,22 +358,28 @@ def main():
         # requested image is defined to ceph, so ensure it's in the config
         if image not in config.config['disks']:
             config.add_item('disks', image)
-        pass
 
-    if config.platform == 'rbd':
-        # if updates_made is not set, the disk pre-exists so on the owning host see if it needs to be resized
-        if not updates_made and this_host == target_host:       # is_this_host(target_host):
+    logger.debug("Check the rbd image size matches the ansible request")
 
-            # check the size, and update if needed
-            changed = rbd_size(module, image, size, pool)
-            if changed:
-                updates_made = True
-                num_changes += 1
+    # if updates_made is not set, the disk pre-exists so on the owning host see if it needs to be resized
+    if not updates_made and this_host == target_host:       # is_this_host(target_host):
 
-        changed, map_device = get_rbd_map(module, image, pool)
+        # check the size, and update if needed
+        changed = rbd_size(image, size, pool)
         if changed:
+            logger.debug("rbd image {} resized to {}".format(image, size))
             updates_made = True
             num_changes += 1
+        else:
+            logger.debug("rbd image {} size matches the configuration file request".format(image))
+
+    logger.debug("Begin processing LIO mapping requirement")
+
+    changed, map_device = get_rbd_map(module, image, pool)
+
+    if changed:
+        updates_made = True
+        num_changes += 1
 
     # now see if we need to add this rbd image to LIO
     lun = lun_in_lio(image)
@@ -321,7 +396,7 @@ def main():
 
             if wwn == '':
                 # disk hasn't been defined before
-                lun = add_device(module, image, map_device)
+                lun = rbd_add_device(module, image, map_device)
                 wwn = lun._get_wwn()
                 owner = set_owner(config.config['gateways'])
 
@@ -338,7 +413,7 @@ def main():
 
             else:
                 # config already has wwn and owner information
-                lun = add_device(module, image, map_device, wwn)
+                lun = rbd_add_device(module, image, map_device, wwn)
                 logger.debug("(main) registered '{}' with wwn '{}' from the config object".format(image, wwn))
 
             updates_made = True
@@ -363,7 +438,7 @@ def main():
                 module.fail_json(msg="(main) waited too long for the wwn information on image {}".format(image))
 
             # At this point we have a usable config, so we just need to add the wwn
-            lun = add_device(module, image, map_device, wwn)
+            lun = rbd_add_device(module, image, map_device, wwn)
 
             logger.debug("(main) added {} to LIO using wwn '{}' defined by {}".format(image,
                                                                                       wwn,
@@ -371,6 +446,8 @@ def main():
             logger.info("(main) added {} to LIO for this gateway".format(image))
             updates_made = True
             num_changes += 1
+
+    logger.debug("Checking ALUA state for this rbd image")
 
     # lun/image is defined to LIO, so just check the preferred alua state is OK
     if config.config['disks'][image]["owner"] == this_host:

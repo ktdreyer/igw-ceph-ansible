@@ -28,6 +28,9 @@
     - name: igw_purge | purging the gateway configuration
       igw_purge: mode="gateway"
 
+    - include: svc-disable-el7.yml
+      when: ansible_os_family == "RedHat"
+
     - name: igw_purge | deleting configured rbd devices
       igw_purge: mode="disks"
       when: igw_purge_type == 'all'

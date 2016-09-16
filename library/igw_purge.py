@@ -3,11 +3,12 @@
 __author__ = 'pcuzner@redhat.com'
 
 import logging
-from logging.handlers import RotatingFileHandler
-from ansible.module_utils.basic import *
 import socket
 import subprocess
+import fileinput
 
+from logging.handlers import RotatingFileHandler
+from ansible.module_utils.basic import *
 
 from rtslib_fb import root
 from rtslib_fb.utils import RTSLibError
@@ -77,12 +78,18 @@ class Gateway(LIO):
 
 def rbd_unmap(image_name):
 
-    unmap_ok = True
-
     try:
         subprocess.check_output("rbd unmap {}".format(image_name), shell=True)
     except subprocess.CalledProcessError:
         unmap_ok = False
+    else:
+        unmap_ok = True
+
+        # unmap'd from runtime, now remove from the rbdmap file referenced at boot
+        for rbdmap_entry in fileinput.input('/etc/ceph/rbdmap', inplace=True):
+            if image_name in rbdmap_entry:
+                continue
+            print rbdmap_entry.strip()
 
     return unmap_ok
 
@@ -191,7 +198,6 @@ def main():
         changes_made = cfg.changed
 
         logger.debug("ending lock state variable {}".format(cfg.config_locked))
-
 
     logger.info("END   - GATEWAY configuration PURGE complete")
 

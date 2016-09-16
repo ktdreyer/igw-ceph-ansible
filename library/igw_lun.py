@@ -20,6 +20,7 @@ from ceph_iscsi_gw.common import Config
 
 SIZE_SUFFIXES = ['M', 'G', 'T']
 CEPH_CONF = '/etc/ceph/ceph.conf'
+KEYRING = '/etc/ceph/ceph.client.admin.keyring'
 
 # remove this list, once the rbd handling works through the rbd module
 # RBD_FEATURES = ['--image-format 2',
@@ -215,6 +216,34 @@ def rados_pool(pool):
     return pool in pool_list
 
 
+def rbdmap_entry(pool, image):
+    """
+    check the given image has an entry in /etc/ceph/rbdmap - if not add it!
+    :param pool: pool name (str)
+    :param image: rbd image name (str)
+    :return: boolean indicating whether the rbdmap file was updated
+    """
+
+    # Assume it's not there, so if we find it flip this to False
+    entry_needed = True
+
+    srch_str = pool + '/' + image
+    with open('/etc/ceph/rbdmap', 'a+') as rbdmap:
+
+        for entry in rbdmap:
+            if entry.startswith(srch_str):
+                # found it - get out,
+                entry_needed = False
+                break
+
+        if entry_needed:
+            # need to add an entry to the rbdmap file
+            rbdmap.write("{}\t\tid=admin,keyring={},options=noshare\n".format(srch_str,
+                                                                             KEYRING))
+
+    return entry_needed
+
+
 def set_alua(lun, desired_state='standby'):
     """
     Sets the ALUA state of a LUN (active/standby)
@@ -376,8 +405,14 @@ def main():
     logger.debug("Begin processing LIO mapping requirement")
 
     changed, map_device = get_rbd_map(module, image, pool)
-
     if changed:
+        updates_made = True
+        num_changes += 1
+
+    # the rbd image exists, and it's the required size, so time to check that it's
+    # listed in rbdmap file (so it gets remapped automagically at boot time)
+    if rbdmap_entry(pool, image):
+        logger.debug('Entry added to /etc/ceph/rbdmap for {}/{}'.format(pool, image))
         updates_made = True
         num_changes += 1
 

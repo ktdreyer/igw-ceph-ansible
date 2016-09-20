@@ -121,6 +121,22 @@ def delete_rbd(module, image_name):
     return True if rc == 0 else False
 
 
+def get_update_host(config):
+    """
+    decide which gateway host should be responsible for any config object updates
+    :param config: configuration dict from the rados pool
+    :return: a suitable gateway host that is online
+    """
+
+    ptr = 0
+    potential_hosts = [host_name for host_name in config["gateways"].keys()
+                       if isinstance(config["gateways"][host_name], dict)]
+
+    # Assume the 1st element from the list is OK for now
+    # TODO check the potential hosts are online/available
+
+    return potential_hosts[ptr]
+
 def main():
 
     fields = {"mode": {"required": True,
@@ -138,6 +154,8 @@ def main():
     logger.info("START - GATEWAY configuration PURGE started, run mode is {}".format(run_mode))
     cfg = Config(logger)
     this_host = socket.gethostname().split('.')[0]
+
+    update_host = get_update_host(cfg.config)
 
     #
     # Purge gateway configuration, if the config has gateways
@@ -158,9 +176,22 @@ def main():
             module.fail_json(msg=lio.error_msg)
 
         if gateway.changed or lio.changed:
+
+            if this_host == update_host:
+                cfg.reset = True
+                gw_keys = cfg.config["gateways"].keys()
+                for key in gw_keys:
+                    cfg.del_item("gateways", key)
+
+                client_names = cfg.config["clients"].keys()
+                for client in client_names:
+                    cfg.del_item("clients", client)
+
+                cfg.commit()
+
             lio.save_config()
             changes_made = True
-            cfg.commit()
+
 
     elif run_mode == 'disks' and len(cfg.config['disks'].keys()) > 0:
         #

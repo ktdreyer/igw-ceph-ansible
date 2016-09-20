@@ -28,7 +28,7 @@ KEYRING = '/etc/ceph/ceph.client.admin.keyring'
 #                 '--image-feature layering']
 
 # RBD_FEATURE_LIST lists the features needs for an rbd image to be exported correctly via
-# LIO to iSCSI clients
+# LIO to iSCSI clients - defined here  ceph/src/include/rbd/features.h
 RBD_FEATURE_LIST = ['RBD_FEATURE_LAYERING']
 
 TIME_OUT_SECS = 30
@@ -285,8 +285,10 @@ def set_owner(gateways):
     :return: specific gateway hostname (str) that should provide the active path for the next LUN
     """
 
-    # turn the dict into a list of tuples
-    gw_items = gateways.items()
+    # Gateways contains simple attributes and dicts that define each gateways settings, so
+    # first we extract only the gateway node definitions from the gateways dict
+    gw_nodes = {key: gateways[key] for key in gateways if isinstance(gateways[key], dict)}
+    gw_items = gw_nodes.items()
 
     # first entry is the lowest number of active_luns
     gw_items.sort(key=lambda x: (x[1]['active_luns']))
@@ -434,6 +436,7 @@ def main():
                 lun = rbd_add_device(module, image, map_device)
                 wwn = lun._get_wwn()
                 owner = set_owner(config.config['gateways'])
+                logger.debug("Owner for {} will be {}".format(image, owner))
 
                 disk_attr = {"wwn": wwn, "owner": owner}
                 config.update_item('disks', image, disk_attr)

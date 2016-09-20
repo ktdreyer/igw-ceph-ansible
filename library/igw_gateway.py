@@ -238,7 +238,14 @@ def main():
             if config.error:
                 module.fail_json(msg=config.error_msg)
             else:
-                if this_host not in config.config['gateways'].keys():
+                gateway_group = config.config["gateways"].keys()
+
+                # this action could be carried out by multiple nodes concurrently, but since the value
+                # is the same it's not worthwhile looking into methods for serialising
+                if "iqn" not in gateway_group:
+                    config.add_item("gateways", "iqn", initial_value=gateway.iqn)
+
+                if this_host not in gateway_group:
                     gateway_metadata = {"portal_ip_address": gateway.ip_address,
                                         "iqn": gateway.iqn,
                                         "active_luns": 0}

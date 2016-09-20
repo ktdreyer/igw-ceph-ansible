@@ -4,6 +4,7 @@ __author__ = 'pcuzner@redhat.com'
 
 
 import logging
+from socket import gethostname
 from logging.handlers import RotatingFileHandler
 from ansible.module_utils.basic import *
 
@@ -11,6 +12,7 @@ import rtslib_fb.root as lio_root
 from rtslib_fb.target import NodeACL, TPG
 from rtslib_fb.utils import RTSLibError
 
+from ceph_iscsi_gw.common import Config
 
 class Client(object):
     """
@@ -104,14 +106,14 @@ class Client(object):
 
         try:
             self.acl = NodeACL(self.tpg, self.iqn)
-            self.change_count += 1
         except RTSLibError as err:
             logger.error("(Client.define_client) FAILED to define {}".format(self.iqn))
             logger.debug("(Client.define_client) failure msg {}".format(err))
             self.error = True
             self.error_msg = err
-
-        logger.info("(Client.define_client) {} added successfully".format(self.iqn))
+        else:
+            self.change_count += 1
+            logger.info("(Client.define_client) {} added successfully".format(self.iqn))
 
     def configure_auth(self):
         """
@@ -249,6 +251,21 @@ def validate_images(image_list, tpg):
 
     return bad_images
 
+def get_update_host(config):
+    """
+    decide which gateway host should be responsible for any config object updates
+    :param config: configuration dict from the rados pool
+    :return: a suitable gateway host that is online
+    """
+
+    ptr = 0
+    potential_hosts = [host_name for host_name in config["gateways"].keys()
+                       if isinstance(config["gateways"][host_name], dict)]
+
+    # Assume the 1st element from the list is OK for now
+    # TODO check the potential hosts are online/available
+
+    return potential_hosts[ptr]
 
 def main():
 
@@ -287,6 +304,10 @@ def main():
     logger.info("START - Client configuration started : {}".format(client_iqn))
 
     client = Client(client_iqn, image_list, auth_type, credentials)
+    config = Config(logger)
+
+    # Determine a host that should be used to update the rados config object (1st available gateway node normally)
+    update_host = get_update_host(config.config)
 
     if desired_state == 'present':                          # NB. This is the default
 
@@ -294,6 +315,16 @@ def main():
         if client.error:
             module.fail_json(msg="Unable to define the client ({}) - {}".format(client_iqn,
                                                                                 client.error_msg))
+
+        if client_iqn not in config.config["clients"].keys() and update_host == gethostname().split('.')[0]:
+            client_metadata = {"image_list": [],
+                               "credentials": ''}
+
+            config.add_item("clients", client_iqn)
+            config.update_item("clients", client_iqn, client_metadata)
+            # persist the config update, and leave the connection to ceph open
+            config.commit("retain")
+
 
         bad_images = validate_images(image_list, client.tpg)
         if not bad_images:
@@ -313,6 +344,17 @@ def main():
         else:
             module.fail_json(msg="(main) non-existent images {} requested for {}".format(bad_images, client_iqn))
 
+        # check the client object's change count, and update the config object is this is the updating host
+        if client.change_count > 0 and update_host == gethostname().split('.')[0]:
+            # update the config object with this clients settings
+            client_metadata = {"image_list": image_list,
+                               "credentials": credentials}
+
+            config.update_item("clients", client_iqn, client_metadata)
+            # persist the config update, and leave the connection to ceph open
+            config.commit()
+
+
     else:
         # the desired state for this client is absent, so remove it if necessary
         if client.exists():
@@ -321,6 +363,12 @@ def main():
             if client.error:
                 module.fail_json(msg="Unable to delete the client ({}) - {}".format(client_iqn,
                                                                                     client.error_msg))
+            else:
+                # remove this client from the config
+                if update_host == gethostname().split('.')[0]:
+                    config.del_item("clients", client_iqn)
+                    config.commit()
+
         else:
             # desired state is absent, but the client does not exist in LIO - Nothing to do!
             logger.info("(main) client {} removal request, but the client is not "

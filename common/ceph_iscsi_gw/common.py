@@ -8,11 +8,14 @@ import traceback
 
 class ConfigTransaction(object):
 
-    def __init__(self, cfg_type, element_name, txn_action='add'):
+    def __init__(self, cfg_type, element_name, txn_action='add', initial_value=None):
+
         self.type = cfg_type
         self.action = txn_action
         self.item_name = element_name
-        self.item_content = {}
+
+        init_state = {} if initial_value is None else initial_value
+        self.item_content = init_state
 
     def __repr__(self):
         return str(self.__dict__)
@@ -34,9 +37,13 @@ class CephCluster(object):
 
 class Config(object):
 
-    seed_config = {"disks": {},
-                   "gateways": {},
-                   "clients": {}}
+    seed_config = {
+                    "disks": {},
+                    "gateways": {},
+                    "clients": {},
+                    "epoch": 0
+                    }
+
     lock_time_limit = 30
 
     def __init__(self, logger, cfg_name='gateway.conf', pool='rbd'):
@@ -46,6 +53,7 @@ class Config(object):
         self.ceph = None
         self.platform = Config.get_platform()
         self.error = False
+        self.reset = False
         self.error_msg = ""
         self.txn_list = []
         self.config_locked = False
@@ -168,12 +176,13 @@ class Config(object):
         self.logger.debug("config refresh - current config is {}".format(self.config))
         self.config = self.get_config()
 
-    def add_item(self, cfg_type, element_name):
-        self.config[cfg_type][element_name] = {}
+    def add_item(self, cfg_type, element_name, initial_value=None):
+        init_state = {} if initial_value is None else initial_value
+        self.config[cfg_type][element_name] = init_state
         self.logger.debug("(Config.add_item) config updated to {}".format(self.config))
         self.changed = True
 
-        txn = ConfigTransaction(cfg_type, element_name)
+        txn = ConfigTransaction(cfg_type, element_name, initial_value=init_state)
         self.txn_list.append(txn)
         # self.txn_ptr = len(self.txn_list) - 1
 
@@ -186,19 +195,19 @@ class Config(object):
         self.txn_list.append(txn)
         # self.txn_ptr = len(self.txn_list) - 1
 
-    def update_item(self, cfg_type, element_name, attr_dict):
-        self.config[cfg_type][element_name] = attr_dict
+    def update_item(self, cfg_type, element_name, element_value):
+        self.config[cfg_type][element_name] = element_value
         self.logger.debug("(Config.update_item) config is {}".format(self.config))
         self.changed = True
-        self.logger.debug("update_item: type={}, item={}, update={}".format(cfg_type,element_name,attr_dict))
+        self.logger.debug("update_item: type={}, item={}, update={}".format(cfg_type, element_name, element_value))
         # self.logger.debug("update_item point ; txn list length is {}, ptr is set to {}".format(len(self.txn_list),
         #                                                                                            self.txn_ptr))
         txn = ConfigTransaction(cfg_type, element_name, 'add')
-        txn.item_content = attr_dict
+        txn.item_content = element_value
         self.txn_list.append(txn)
         # self.txn_ptr = len(self.txn_list) - 1
 
-    def _commit_rbd(self):
+    def _commit_rbd(self, post_action):
 
         # self.logger.debug("_commit_rbd updating config with {}".format(config_str))
 
@@ -224,26 +233,30 @@ class Config(object):
                 self.error_msg = "Unknown transaction type ({}} encountered in _commit_rbd".format(txn.action)
 
         if not self.error:
+            if self.reset:
+                current_config["epoch"] = 0
+            else:
+                current_config["epoch"] += 1        # Python will switch from plain to long int automagically
+
             config_str = json.dumps(current_config)
             self.logger.debug("_commit_rbd updating config to {}".format(config_str))
             config_str_fmtd = json.dumps(current_config, sort_keys=True, indent=4, separators=(',', ': '))
             ioctx.write_full(self.config_name, config_str_fmtd)
+            del self.txn_list[:]                # emtpy the list of transactions
 
         self.unlock()
         ioctx.close()
 
-        self.ceph.shutdown()
+        if post_action == 'close':
+            self.ceph.shutdown()
 
     def _commit_glfs(self, config_str):
         pass
 
-    def commit(self):
+    def commit(self, post_action='close'):
 
-        # config_str = json.dumps(self.config)
-        # self.logger.debug("(Config.commit) Config being updated to {}".format(config_str))
+        self.commit_config(post_action)
 
-        # not sure config_str is actually needed
-        self.commit_config()        # (config_str)
 
     @classmethod
     def get_platform(cls):

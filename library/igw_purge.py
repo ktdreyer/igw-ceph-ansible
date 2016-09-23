@@ -31,11 +31,14 @@ class LIO(object):
         configured_images = config.config['disks'].keys()
 
         for stg_object in self.lio_root.storage_objects:
-            if stg_object.name in configured_images and 'rbd' in stg_object.udev_path:
 
+            if stg_object.name in configured_images and 'mapper' in stg_object.udev_path:
                 # this is an rbd device that's in the config object, so remove it
                 try:
+                    dm_device = stg_object.udev_path
+
                     stg_object.delete()
+                    dm_remove_device(dm_device)
                     rbd_unmap(stg_object.name)
 
                     self.changed = True
@@ -74,6 +77,19 @@ class Gateway(LIO):
                 self.changed = True
                 # remove the gateway from the config dict
                 self.config.del_item('gateways', this_host)
+
+
+def dm_remove_device(dm_device):
+    rm_ok = True
+
+    try:
+        subprocess.check_output("multipath -f {}".format(os.path.basename(dm_device)),
+                                shell=True)
+
+    except subprocess.CalledProcessError:
+        rm_ok = False
+
+    return rm_ok
 
 
 def rbd_unmap(image_name):
@@ -155,12 +171,11 @@ def main():
     cfg = Config(logger)
     this_host = socket.gethostname().split('.')[0]
 
-    update_host = get_update_host(cfg.config)
-
     #
     # Purge gateway configuration, if the config has gateways
     if run_mode == 'gateway' and len(cfg.config['gateways'].keys()) > 0:
 
+        update_host = get_update_host(cfg.config)
         lio = LIO()
         gateway = Gateway(cfg)
 
@@ -192,35 +207,17 @@ def main():
             lio.save_config()
             changes_made = True
 
-
     elif run_mode == 'disks' and len(cfg.config['disks'].keys()) > 0:
         #
         # Remove the disks on this host, that have been registered in the config object
         #
         # if the owner field for a disk is set to this host, this host can safely delete it
-        # nb. owner gets set by the rebalance process
+        # nb. owner gets set at rbd allocation and mapping time
         images_left = []
         # delete_list will contain a list of image names where the owner is this host
         delete_list = [key for key in cfg.config['disks'] if cfg.config['disks'][key]['owner'] == this_host]
         if delete_list:
             images_left = delete_group(module, delete_list, cfg)
-        else:
-            # no disks have an owner that matches this system, so we need to lock the config and
-            # attempt to drop all luns - competing locks from each gateway running the 'purge'
-            cfg.lock()
-            if not cfg.error:
-                logger.debug("Config locked (lock state is {})".format(cfg.config_locked))
-                # we have the config, check for disks to remove
-                cfg.refresh()
-                delete_list = cfg.config['disks'].keys()
-                if delete_list:
-                    images_left = delete_group(module, delete_list, cfg)
-                else:
-                    logger.debug("Config lock obtained, but there are no disks remaining")
-                    cfg.unlock()
-            else:
-                # couldn't get a lock before the timeout was encountered
-                logger.debug("Couldn't get a lock on the config - '{}'".format(cfg.error_msg))
 
         # if the delete list still has entries we had problems deleting the images
         if images_left:

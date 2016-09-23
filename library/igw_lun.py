@@ -29,7 +29,7 @@ KEYRING = '/etc/ceph/ceph.client.admin.keyring'
 
 # RBD_FEATURE_LIST lists the features needs for an rbd image to be exported correctly via
 # LIO to iSCSI clients - defined here  ceph/src/include/rbd/features.h
-RBD_FEATURE_LIST = ['RBD_FEATURE_LAYERING']
+RBD_FEATURE_LIST = ['RBD_FEATURE_LAYERING', 'RBD_FEATURE_EXCLUSIVE_LOCK']
 
 TIME_OUT_SECS = 30
 LOOP_DELAY = 2
@@ -73,7 +73,7 @@ def get_rbd_map(module, image, pool):
 
     if not map_device:
         # not mapped, so map it
-        map_cmd = 'rbd map {}/{}'.format(pool, image)
+        map_cmd = 'rbd map -o noshare {}/{}'.format(pool, image)
         rc, map_device, err = module.run_command(map_cmd)
         if rc != 0:
             module.fail_json(msg="map of {}/{} failed".format(pool, image))
@@ -92,6 +92,65 @@ def rbd_mapped(rbd_map_output, image, pool='rbd'):
             device = mapped_rbds[rbd_id]['device']
             break
     return device.rstrip()
+
+
+def rbd_read_sysfs_file(rbd_bus_id, filename):
+
+    rbd_bus_dev_path = "/sys/bus/rbd/devices/{}".format(rbd_bus_id)
+    path = os.path.join(rbd_bus_dev_path, filename)
+
+    try:
+        with open(path, 'r') as inputfile:
+            contents = inputfile.read().rstrip('\n')
+    except IOError:
+        return None
+    else:
+        return contents
+
+
+def dm_device_name_from_rbd_map(map_device):
+    rbd_bus_id = map_device[8:]
+
+    pool = rbd_read_sysfs_file(rbd_bus_id, "pool_id")
+    image_id = rbd_read_sysfs_file(rbd_bus_id, "image_id")
+    current_snap = rbd_read_sysfs_file(rbd_bus_id, "current_snap")
+
+    if pool and image_id:
+
+        dm_uid = "/dev/mapper/{}-{}".format(pool, image_id)
+        if current_snap != "-":
+            dm_uid += "-{}".format(rbd_read_sysfs_file(rbd_bus_id, "snap_id"))
+
+    else:
+        dm_uid = None
+
+    return dm_uid
+
+
+def dm_wait_for_device(dm_device):
+    waiting = 0
+
+    # wait for multipathd and udev to setup /dev node
+    # /dev/mapper/<pool_id>-<rbd_image_id>
+    # e.g. /dev/mapper/0-519d42ae8944a
+    while os.path.exists(dm_device) is False:
+        sleep(LOOP_DELAY)
+        waiting += LOOP_DELAY
+        if waiting >= TIME_OUT_SECS:
+            break
+
+    return os.path.exists(dm_device)
+
+
+def dm_get_device(map_device):
+    dm_device = dm_device_name_from_rbd_map(map_device)
+    if dm_device is None:
+        return None
+
+    if not dm_wait_for_device(dm_device):
+        return None
+
+    return dm_device
 
 
 def lun_in_lio(image):
@@ -149,7 +208,7 @@ def rbd_add_device(module, image, device_path, in_wwn=None):
     new_lun = None
     try:
         new_lun = BlockStorageObject(name=image, dev=device_path, wwn=in_wwn)
-        set_alua(new_lun, "standby")
+        # set_alua(new_lun, "standby")
     except RTSLibError as err:
         module.fail_json(msg="failed to add {} to LIO - error({})".format(image, str(err)))
 
@@ -244,36 +303,41 @@ def rbdmap_entry(pool, image):
     return entry_needed
 
 
-def set_alua(lun, desired_state='standby'):
+def set_alua(lun, pref):
     """
-    Sets the ALUA state of a LUN (active/standby)
+    Sets the ALUA state of a LUN to active. All LUNS are exposed as active, but their preferred bit
+    is modified to allow the active path to be balanced across the gateway nodes
     :param lun: LIO LUN object
-    :param desired_state: active or standby state
+    :param pref: 1 = preferred, 0 = non preferred (str)
     :return: None
     """
 
-    alua_state_options = {"active": '0',
-                          "active/unoptimized": '1',
-                          "standby": '2'}
     configfs_path = lun.path
     lun_name = lun.name
     alua_access_state = 'alua/default_tg_pt_gp/alua_access_state'
     alua_access_type = 'alua/default_tg_pt_gp/alua_access_type'
-    type_fullpath = os.path.join(configfs_path, alua_access_type)
+    alua_preferred = 'alua/default_tg_pt_gp/preferred'
 
+    type_fullpath = os.path.join(configfs_path, alua_access_type)
     if fread(type_fullpath) != 'Implicit':
         logger.info("(set_alua) Switching device alua access type to Implicit - i.e. active path set by gateways")
         fwrite(type_fullpath, '1')
     else:
-        logger.debug("(set_alua) lun alua_access_type already set to Implicit - no change needed")
+        logger.debug("(set_alua) alua_access_type for {} is correct, no change needed".format(lun_name))
 
     state_fullpath = os.path.join(configfs_path, alua_access_state)
-    if fread(state_fullpath) != alua_state_options[desired_state]:
-        logger.debug("(set_alua) Updating alua_access_state for {} to {}".format(lun_name,
-                                                                                 desired_state))
-        fwrite(state_fullpath, alua_state_options[desired_state])
+    if fread(state_fullpath) != "0":
+        logger.debug("(set_alua) Updating alua_access_state for {} to active".format(lun_name))
+        fwrite(state_fullpath, "0")
     else:
-        logger.debug("(set_alua) Skipping alua update - already set to desired state '{}'".format(desired_state))
+        logger.debug("(set_alua) alua_access_state for {} is correct, no change needed".format(lun_name))
+
+    pref_fullpath = os.path.join(configfs_path, alua_preferred)
+    if fread(pref_fullpath) != pref:
+        logger.debug("(set_alua) Updating alua_preferred state to {} for {}".format(pref, lun_name))
+        fwrite(pref_fullpath, pref)
+    else:
+        logger.debug("(set_alua) alua preferred state for {} is correct, no change needed".format(lun_name))
 
 
 def set_owner(gateways):
@@ -285,8 +349,8 @@ def set_owner(gateways):
     :return: specific gateway hostname (str) that should provide the active path for the next LUN
     """
 
-    # Gateways contains simple attributes and dicts that define each gateways settings, so
-    # first we extract only the gateway node definitions from the gateways dict
+    # Gateways contains simple attributes and dicts. The dicts define the gateways settings, so
+    # first we extract only the dicts within the main gateways dict
     gw_nodes = {key: gateways[key] for key in gateways if isinstance(gateways[key], dict)}
     gw_items = gw_nodes.items()
 
@@ -407,9 +471,21 @@ def main():
     logger.debug("Begin processing LIO mapping requirement")
 
     changed, map_device = get_rbd_map(module, image, pool)
+
     if changed:
         updates_made = True
         num_changes += 1
+
+    # for LIO mapping purposes, we use the device mapper device not the raw /dev/rbdX device
+    # Using the dm device ensures that any connectivity issue doesn't result in stale device
+    # structures in the kernel, since device-mapper will tidy those up
+    dm_device = dm_get_device(map_device)
+    if dm_device is None:
+        logger.critical("Could not find dm multipath device for {}. Make sure the multipathd service is enabled.".format(image))
+        module.fail_json(msg="Could not find dm multipath device for {}".format(image))
+
+    logger.debug("mapped {}  to {}.".format(image, dm_device))
+    dm_device_name = os.path.basename(dm_device)
 
     # the rbd image exists, and it's the required size, so time to check that it's
     # listed in rbdmap file (so it gets remapped automagically at boot time)
@@ -433,7 +509,7 @@ def main():
 
             if wwn == '':
                 # disk hasn't been defined before
-                lun = rbd_add_device(module, image, map_device)
+                lun = rbd_add_device(module, image, dm_device)
                 wwn = lun._get_wwn()
                 owner = set_owner(config.config['gateways'])
                 logger.debug("Owner for {} will be {}".format(image, owner))
@@ -451,7 +527,7 @@ def main():
 
             else:
                 # config already has wwn and owner information
-                lun = rbd_add_device(module, image, map_device, wwn)
+                lun = rbd_add_device(module, image, dm_device, wwn)
                 logger.debug("(main) registered '{}' with wwn '{}' from the config object".format(image, wwn))
 
             updates_made = True
@@ -476,7 +552,7 @@ def main():
                 module.fail_json(msg="(main) waited too long for the wwn information on image {}".format(image))
 
             # At this point we have a usable config, so we just need to add the wwn
-            lun = rbd_add_device(module, image, map_device, wwn)
+            lun = rbd_add_device(module, image, dm_device, wwn)
 
             logger.debug("(main) added {} to LIO using wwn '{}' defined by {}".format(image,
                                                                                       wwn,
@@ -490,11 +566,11 @@ def main():
     # lun/image is defined to LIO, so just check the preferred alua state is OK
     if config.config['disks'][image]["owner"] == this_host:
         # get LUN object for this image
-        logger.info("Setting alua state to active for image {}".format(image))
-        set_alua(lun, 'active')
+        logger.info("Setting alua preferred bit for image '{}'".format(image))
+        set_alua(lun, '1')
     else:
-        logger.info("Setting alua state to standby for image {}".format(image))
-        set_alua(lun, 'standby')
+        logger.info("Clearing alua preferred bit for image '{}'".format(image))
+        set_alua(lun, '0')
 
     # the owning host for an image is the only host that commits to the config
     if this_host == target_host and config.changed:

@@ -4,6 +4,7 @@ import rados
 import time
 import json
 import os
+import sys
 import traceback
 
 class ConfigTransaction(object):
@@ -163,6 +164,7 @@ class Config(object):
             self.logger.debug("_seed_rbd_config found empty config object")
             seed = json.dumps(Config.seed_config, sort_keys=True, indent=4, separators=(',', ': '))
             ioctx.write_full(self.config_name, seed)
+            ioctx.set_xattr(self.config_name, "epoch", "0")
             self.changed = True
 
         self.unlock()
@@ -242,6 +244,7 @@ class Config(object):
             self.logger.debug("_commit_rbd updating config to {}".format(config_str))
             config_str_fmtd = json.dumps(current_config, sort_keys=True, indent=4, separators=(',', ': '))
             ioctx.write_full(self.config_name, config_str_fmtd)
+            ioctx.set_xattr(self.config_name, "epoch", str(current_config["epoch"]))
             del self.txn_list[:]                # emtpy the list of transactions
 
         self.unlock()
@@ -269,6 +272,16 @@ class Config(object):
             return 'rbd'
 
         return ''
+
+
+def ansible_control():
+    """
+    establish whether ansible modules are in the current path to determine whether the code is called
+    through ansible, or directly through a module import
+    :return: Boolean
+    """
+
+    return "ansible.module_utils.basic" in sys.modules
 
 
 def main():

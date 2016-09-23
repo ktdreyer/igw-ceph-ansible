@@ -9,12 +9,18 @@
           - "ansible_distribution == 'RedHat'"
           - "ansible_distribution_version == '7.3'"
 
+    # TODO : Add an rpm check to ensure the rpm providing the common python packages is available to the gateway nodes
+    # handle the environment pre-req's for EL7
+    - include: pkgs_prereqs_el7.yml
+      when: ansible_os_family == "RedHat"
+
     # Setup the rbdmap and target services
-    - include: svc-enable-el7.yml
+    - include: svc_enable_el7.yml
       when: ansible_os_family == "RedHat"
 
     - name: igw_gateway (tgt) | Configure iSCSI Target (gateway)
-      igw_gateway: mode='target' gateway_iqn={{ gateway_iqn }} iscsi_network={{ iscsi_network }}
+#      igw_gateway: mode='target' gateway_iqn={{ gateway_iqn }} iscsi_network={{ iscsi_network }}
+      igw_gateway: mode="target" gateway_iqn={{ gateway_iqn }} gateway_ip_list={{ gateway_ip_list }}
       register: target
 
     - name: igw_lun | Configure LUNs (create/map rbds and add to LIO)
@@ -23,10 +29,10 @@
       register: images
 
     - name: igw_gateway (map) | Map LUNs to the iSCSI target
-      igw_gateway: mode='map' gateway_iqn={{ gateway_iqn }} iscsi_network={{ iscsi_network }}
+      igw_gateway: mode='map' gateway_iqn={{ gateway_iqn }} gateway_ip_list={{ gateway_ip_list }}
       register: luns
 
-    - name: igw_client | Configure a client connectivity
+    - name: igw_client | Configure client connectivity
       igw_client: client_iqn={{ item.client }} image_list={{item.image_list}} auth='chap' credentials={{ item.credentials }} state={{ item.status }}
       with_items: "{{ client_connections }}"
       register: clients

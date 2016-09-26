@@ -9,8 +9,8 @@ from rtslib_fb.fabric import ISCSIFabricModule
 from rtslib_fb import root
 from rtslib_fb.utils import RTSLibError
 
-from ceph_iscsi_gw.utils import ipv4_addresses
-from ceph_iscsi_gw.common import Config
+from ceph_iscsi_config.utils import ipv4_addresses
+from ceph_iscsi_config.common import Config
 
 
 class GWTarget(object):
@@ -196,13 +196,14 @@ class GWTarget(object):
                 config.add_item("gateways", "iqn", initial_value=self.iqn)
 
             if this_host not in gateway_group:
-                inactive_portal_ip = self.gateway_ip_list
+                inactive_portal_ip = list(self.gateway_ip_list)
                 inactive_portal_ip.remove(self.active_portal_ip)
                 gateway_metadata = {"portal_ip_address": self.active_portal_ip,
                                     "iqn": self.iqn,
                                     "active_luns": 0,
                                     "tpgs:": len(self.tpg_list),
-                                    "inactive_portal_ips": inactive_portal_ip}
+                                    "inactive_portal_ips": inactive_portal_ip,
+                                    "gateway_ip_list": self.gateway_ip_list}
 
                 config.add_item("gateways", this_host)
                 config.update_item("gateways", this_host, gateway_metadata)

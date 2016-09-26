@@ -8,7 +8,7 @@ import rtslib_fb.root as lio_root
 from rtslib_fb.target import NodeACL, TPG
 from rtslib_fb.utils import RTSLibError
 
-from ceph_iscsi_gw.common import Config, ansible_control
+from ceph_iscsi_config.common import Config, ansible_control
 
 
 class GWClient(object):

@@ -5,6 +5,27 @@ import socket
 import netaddr
 import netifaces
 import struct
+import subprocess
+
+class Defaults(object):
+
+    size_suffixes = ['M', 'G', 'T']
+    time_out = 30
+    loop_delay = 2
+    ceph_conf = '/etc/ceph/ceph.conf'
+    keyring = '/etc/ceph/ceph.client.admin.keyring'
+    ceph_user = 'admin'
+    rbd_map_file = '/etc/ceph/rbdmap'
+
+
+def shellcommand(command_string):
+
+    try:
+        response = subprocess.check_output(command_string, shell=True)
+    except subprocess.CalledProcessError:
+        return None
+    else:
+        return response
 
 
 def valid_ip(ip, port=22):
@@ -34,6 +55,22 @@ def valid_ip(ip, port=22):
             sock.close()
 
     return ip_OK
+
+
+def valid_size(size):
+    valid = True
+    unit = size[-1]
+
+    if unit.upper() not in Defaults.size_suffixes:
+        valid = False
+    else:
+        try:
+            value = int(size[:-1])
+        except ValueError:
+            valid = False
+
+    return valid
+
 
 def valid_cidr(subnet):
     """
@@ -89,7 +126,6 @@ def ipv4_address():
             yield link['addr']
 
 
-
 def get_ip_address(iscsi_network):
     """
     Return an IP address assigned to the running host that matches the given
@@ -108,3 +144,17 @@ def get_ip_address(iscsi_network):
             break
 
     return ip
+
+
+def convert_2_bytes(disk_size):
+
+    power = [2, 3, 4]
+    unit = disk_size[-1]
+    offset = Defaults.size_suffixes.index(unit)
+    value = int(disk_size[:-1])     # already validated, so no need for try/except clause
+
+    _bytes = value*(1024**power[offset])
+
+    return _bytes
+
+

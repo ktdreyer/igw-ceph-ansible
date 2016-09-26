@@ -80,3 +80,5 @@ The solution has been tested on a collocated cluster where the osd/mons and gate
   **Workaround**: Rerun the playbook to correct preferred paths following gateway or target service restart    
   **Issue**: The *rtslib* 'save_to_file' call does **not** persist alua state information in the saveconfig.json file, so when the service restarts the alua preferred setting is lost    
     
+2. preferred paths are defined by using the name of the gateway, which assumes the gateway names resolves to the interface used for the iscsi service. This is a big assumption and needs to be addressed   
+3. the ceph cluster name is the default 'ceph', so the corresponding configuration file /etc/ceph/ceph.conf is valid

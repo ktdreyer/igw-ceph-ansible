@@ -7,7 +7,7 @@ import logging
 from logging.handlers import RotatingFileHandler
 from ansible.module_utils.basic import *
 
-from ceph_iscsi_gw.client import GWClient
+from ceph_iscsi_config.client import GWClient
 
 
 def main():

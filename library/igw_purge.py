@@ -13,7 +13,7 @@ from ansible.module_utils.basic import *
 from rtslib_fb import root
 from rtslib_fb.utils import RTSLibError
 
-from ceph_iscsi_gw.common import Config
+from ceph_iscsi_config.common import Config
 
 
 class LIO(object):

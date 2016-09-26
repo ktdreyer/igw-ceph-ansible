@@ -8,10 +8,8 @@ import logging
 from logging.handlers import RotatingFileHandler
 from ansible.module_utils.basic import *
 
-from ceph_iscsi_gw.common import Config
-from ceph_iscsi_gw.gateway import GWTarget
-# from ceph_iscsi_gw.utils import valid_cidr
-from ceph_iscsi_gw.utils import valid_ip
+from ceph_iscsi_config.gateway import GWTarget
+from ceph_iscsi_config.utils import valid_ip
 
 
 def main():

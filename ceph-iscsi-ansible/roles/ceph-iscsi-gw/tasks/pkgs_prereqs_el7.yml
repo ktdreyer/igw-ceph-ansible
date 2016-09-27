@@ -1,6 +1,9 @@
 ---
   - name: Check required rpms are installed at latest versions
-    yum: name=device-mapper-multipath state=latest
+    yum: name={{ item.rpm }} state=latest
+    with_items:
+      - rpm: device-mapper-multipath
+      - rpm: ceph-iscsi-config
 
   - name: check multipath.conf file state
     stat: path=/etc/multipath.conf

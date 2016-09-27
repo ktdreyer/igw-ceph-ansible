@@ -24,6 +24,7 @@ class RBDDev(object):
         self.image = image
         self.size = size
         self.pool = pool
+        self.pool_id = RBDDev.get_pool_id(pool_name=self.pool)
         self.error = False
         self.error_msg = ''
         self.device_map = None
@@ -142,6 +143,19 @@ class RBDDev(object):
                 rbd_inst = rbd.RBD()
                 rbd_names = rbd_inst.list(ioctx)
         return rbd_names
+
+    @staticmethod
+    def get_pool_id(conf=Defaults.ceph_conf, pool_name='rbd'):
+        """
+        Query Rados to get the pool name of a given pool_id
+        :param conf: ceph configuration file
+        :param pool_name: pool name (str)
+        :return: pool id (int)
+        """
+        with rados.Rados(conffile=conf) as cluster:
+            pool_id = cluster.pool_lookup(pool_name)
+
+        return pool_id
 
 
 class LUN(object):
@@ -369,9 +383,16 @@ class LUN(object):
         found_it = False
         rtsroot = root.RTSRoot()
         for stg_object in rtsroot.storage_objects:
+
+            # First match on name, but then check the pool incase the same name exists in multiple pools
             if stg_object.name == self.image:
-                found_it = True
-                break
+
+                # udev_path shows something like '/dev/mapper/0-8fd91515f007c' - the first component is the
+                # pool id
+                pool_id = int(stg_object.udev_path.split('-')[0])
+                if pool_id == self.pool_id:
+                    found_it = True
+                    break
 
         return stg_object if found_it else None
 

@@ -60,13 +60,13 @@ nodes.
 Alternatively, you may also use the provided tar files
 
   1. Unzip the project archive on your ansible controller host  
-  2. Install the ceph_iscsi_gw package on each of the nodes.  
+  2. Install the ceph_iscsi_config package on each of the nodes.  
   2.a In the *root* of the project's archive on your ansible controller host  
         ```tar cvzf ceph_iscsi_config.tar.gz ceph-iscsi-config/```  
         ```scp ceph_iscsi_config.tar.gz <NODE>:~/.```  
   2.b On each node, install the package  
         ```tar xvzf ceph_iscsi_config.tar.gz```  
-        ```cd ceph-isci-config```  
+        ```cd ceph-iscsi-config```  
         ```python setup.py install```  
   This package provides;  
   - the common python class used by the ansible modules when interacting with the rados configuration object.  
@@ -81,7 +81,7 @@ Alternatively, you can use the files within the ceph-iscsi-ansible directory, di
 Once the playbook is installed, follow these steps to configure  
 1. Ensure that /etc/ansible/hosts has an entry for ceph-iscsi-gw, listing the hosts you want to deploy the gateway configuration to.    
 2. The playbook used to create a gateway environment is called ceph-iscsi-gw.yml in /usr/share/ceph-ansible.  
-3. Parameters that govern the configuration are defined in group_vars/ceph-iscs-gw.yml  
+3. Parameters that govern the configuration are defined in group_vars/ceph-iscsi-gw.yml  
 4. run the playbook  
   ```> ansible-playbook ceph-iscsi-gw.yml```  
  

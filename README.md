@@ -94,12 +94,11 @@ You have to specify either;
   - *lio* ... to remove the targetcli (LIO) config across each gateway  
   - *all* ... remove the LIO configuration AND delete all rbd devices that were mapped by LIO    
   
-
+*nb the purge description above needs to be updated following the restructure of the playbooks to align with ceph-ansible (2016/09/27)*
 
 ##Known Issues  
 1. Preferred path state on a gateway can be lost following either a gateway reboot, or a restart of the target service  
   **Workaround**: Rerun the playbook to correct preferred paths following gateway or target service restart    
   **Issue**: The *rtslib* 'save_to_file' call does **not** persist alua state information in the saveconfig.json file, so when the service restarts the alua preferred setting is lost    
-    
-2. preferred paths are defined by using the name of the gateway, which assumes the gateway names resolves to the interface used for the iscsi service.    
-3. the ceph cluster name is the default 'ceph', so the corresponding configuration file /etc/ceph/ceph.conf is valid
+        
+2. the ceph cluster name is the default 'ceph', so the corresponding configuration file /etc/ceph/ceph.conf is assumed to be valid

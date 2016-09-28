@@ -1,8 +1,6 @@
 #!/usr/bin/python
 
 from setuptools import setup
-import distutils.command.install_scripts
-import shutil
 
 f = open('README')
 long_description = f.read().strip()
